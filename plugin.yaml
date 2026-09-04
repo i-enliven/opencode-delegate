@@ -1,0 +1,5 @@
+name: opencode-delegate
+version: 1.0.1
+description: Delegate coding tasks to OpenCode CLI (opencode run)
+provides_tools:
+  - opencode_delegate
