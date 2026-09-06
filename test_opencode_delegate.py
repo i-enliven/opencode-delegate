@@ -218,9 +218,9 @@ def test_timeout_clamping():
         tools.opencode_delegate({"goal": "test", "timeout": 9999})
         assert mock_run.call_args[1]["timeout"] == 1800
 
-        # Invalid string defaults to 600
+        # Invalid string defaults to DEFAULT_TIMEOUT (300)
         tools.opencode_delegate({"goal": "test", "timeout": "invalid"})
-        assert mock_run.call_args[1]["timeout"] == 600
+        assert mock_run.call_args[1]["timeout"] == tools.DEFAULT_TIMEOUT
 
 
 def test_timeout_expired():
@@ -418,3 +418,79 @@ def test_subprocess_stdin_devnull():
         tools.opencode_session_list({})
         assert mock_run.call_args.kwargs.get("stdin") == subprocess.DEVNULL
 
+
+
+def test_get_session_dir_sqlite_hit(tmp_path):
+    """Test that _get_session_dir resolves the directory from SQLite DB."""
+    import sqlite3
+    db_file = tmp_path / "opencode.db"
+    sess_dir = tmp_path / "target_project"
+    sess_dir.mkdir()
+
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("CREATE TABLE session (id TEXT, directory TEXT)")
+        conn.execute("INSERT INTO session VALUES (?, ?)", ("ses_test_123", str(sess_dir)))
+
+    with patch.object(tools, "get_opencode_db_path", return_value=str(db_file)):
+        resolved = tools._get_session_dir("ses_test_123")
+        assert resolved == str(sess_dir)
+
+
+def test_get_session_dir_sqlite_missing_dir(tmp_path):
+    """Test that _get_session_dir returns None if directory does not exist on disk."""
+    import sqlite3
+    db_file = tmp_path / "opencode.db"
+    non_existent = tmp_path / "ghost_project"
+
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("CREATE TABLE session (id TEXT, directory TEXT)")
+        conn.execute("INSERT INTO session VALUES (?, ?)", ("ses_test_456", str(non_existent)))
+
+    with patch.object(tools, "get_opencode_db_path", return_value=str(db_file)):
+        resolved = tools._get_session_dir("ses_test_456")
+        assert resolved is None
+
+
+def test_get_session_dir_export_fallback(tmp_path):
+    """Test fallback to opencode export when SQLite DB has no entry."""
+    target_dir = tmp_path / "fallback_dir"
+    target_dir.mkdir()
+    export_payload = json.dumps({"info": {"id": "ses_fb", "directory": str(target_dir)}})
+    mock_proc = MagicMock(returncode=0, stdout=export_payload, stderr="")
+
+    with patch.object(tools, "get_opencode_db_path", return_value="/nonexistent/path/db.sqlite"), \
+         patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc):
+        resolved = tools._get_session_dir("ses_fb")
+        assert resolved == str(target_dir)
+
+
+def test_opencode_delegate_auto_aligns_cwd_with_session_dir(tmp_path):
+    """Ensure opencode_delegate aligns cwd and --dir with session_dir when resuming."""
+    session_dir = tmp_path / "original_session_workdir"
+    session_dir.mkdir()
+    mock_proc = MagicMock(returncode=0, stdout="ok", stderr="")
+
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch.object(tools, "_get_session_dir", return_value=str(session_dir)), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_delegate({"goal": "continue task", "session": "ses_existing"}))
+        assert res["ok"] is True
+        args, kwargs = mock_run.call_args
+        # Verify --dir was passed the session directory
+        assert args[0] == ["/fake/bin/opencode", "run", "--dir", str(session_dir), "continue task", "--session", "ses_existing"]
+        # Verify subprocess was invoked inside the session directory
+        assert kwargs["cwd"] == str(session_dir)
+
+
+def test_subprocess_start_new_session_flag():
+    """Ensure subprocess.run is invoked with start_new_session=True for process group isolation."""
+    mock_proc = MagicMock(returncode=0, stdout="[]", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        tools.opencode_delegate({"goal": "test process group"})
+        assert mock_run.call_args.kwargs.get("start_new_session") is True
+
+        mock_run.reset_mock()
+        tools.opencode_session_list({})
+        assert mock_run.call_args.kwargs.get("start_new_session") is True

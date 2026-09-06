@@ -6,11 +6,13 @@ import glob
 import json
 import os
 import shutil
+import signal
+import sqlite3
 import subprocess
 from typing import Any
 
 TRUNCATION_LIMIT = 8000
-DEFAULT_TIMEOUT = 600
+DEFAULT_TIMEOUT = 300
 MIN_TIMEOUT = 30
 MAX_TIMEOUT = 1800
 SESSION_TIMEOUT = 60
@@ -39,6 +41,59 @@ def resolve_opencode_binary() -> str | None:
     return None
 
 
+def get_opencode_db_path() -> str:
+    """Return default path to opencode SQLite database."""
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        return os.path.join(os.path.expanduser(xdg_data), "opencode", "opencode.db")
+    return os.path.expanduser("~/.local/share/opencode/opencode.db")
+
+
+
+def _get_session_dir(session_id: str) -> str | None:
+    """Look up the recorded directory for an OpenCode session.
+
+    First checks OpenCode's local SQLite database. If unavailable or not found,
+    falls back to CLI export. Returns the resolved directory if it exists on disk, else None.
+    """
+    if not session_id or not isinstance(session_id, str):
+        return None
+    session_id = session_id.strip()
+    if not session_id:
+        return None
+
+    # Fast path: SQLite query
+    db_path = get_opencode_db_path()
+    if os.path.isfile(db_path):
+        try:
+            with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0) as conn:
+                cursor = conn.cursor()
+                row = cursor.execute("SELECT directory FROM session WHERE id = ?", (session_id,)).fetchone()
+                if row and row[0] and isinstance(row[0], str):
+                    cand = os.path.abspath(os.path.expanduser(row[0].strip()))
+                    if os.path.isdir(cand):
+                        return cand
+        except Exception:
+            pass
+
+    # Fallback: CLI export
+    try:
+        ret, stdout, _ = _run_cli(["export", session_id], timeout=10)
+        if ret == 0 and stdout:
+            start = stdout.find("{")
+            if start != -1:
+                data = json.loads(stdout[start:])
+                directory = data.get("info", {}).get("directory")
+                if directory and isinstance(directory, str):
+                    cand = os.path.abspath(os.path.expanduser(directory.strip()))
+                    if os.path.isdir(cand):
+                        return cand
+    except Exception:
+        pass
+
+    return None
+
+
 def _run_cli(cmd: list[str], timeout: int = SESSION_TIMEOUT, cwd: str | None = None) -> tuple[int | None, str, str]:
     """Run the opencode CLI and return (returncode, stdout, stderr)."""
     bin_path = resolve_opencode_binary()
@@ -62,6 +117,7 @@ def _run_cli(cmd: list[str], timeout: int = SESSION_TIMEOUT, cwd: str | None = N
             capture_output=True,
             text=True,
             shell=False,
+            start_new_session=True,
         )
     except subprocess.TimeoutExpired:
         return None, "", f"Execution timed out after {timeout} seconds"
@@ -128,7 +184,15 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
             })
 
         workdir = args.get("workdir")
-        if workdir and isinstance(workdir, str) and workdir.strip():
+        session = args.get("session")
+        session_id = session.strip() if session and isinstance(session, str) else None
+
+        # Auto-align working directory with the session's recorded creation directory.
+        # This is critical to prevent OpenCode CLI instance mismatch hangs when resuming sessions.
+        session_dir = _get_session_dir(session_id) if session_id else None
+        if session_dir:
+            cwd = session_dir
+        elif workdir and isinstance(workdir, str) and workdir.strip():
             cwd = os.path.abspath(os.path.expanduser(workdir.strip()))
         else:
             cwd = os.getcwd()
@@ -166,9 +230,8 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
                 if isinstance(file_item, str) and file_item.strip():
                     cmd.extend(["--file", file_item.strip()])
 
-        session = args.get("session")
-        if session and isinstance(session, str) and session.strip():
-            cmd.extend(["--session", session.strip()])
+        if session_id:
+            cmd.extend(["--session", session_id])
         elif args.get("continue") is True:
             cmd.append("--continue")
 
@@ -192,6 +255,7 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
                 capture_output=True,
                 text=True,
                 shell=False,
+                start_new_session=True,
             )
         except subprocess.TimeoutExpired as exc:
             partial_out = exc.stdout or ""
@@ -211,11 +275,12 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
                 "error": "opencode CLI binary not found or executable cannot be invoked",
             })
 
+        exit_code = proc.returncode
         stdout = proc.stdout or ""
         stderr = proc.stderr or ""
 
         if use_json:
-            session_id = None
+            session_id_out = None
             tokens = None
             cost = None
             for line in stdout.splitlines():
@@ -231,21 +296,21 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
                 part = event.get("part")
                 if isinstance(part, dict):
                     if part.get("sessionID"):
-                        session_id = part["sessionID"]
+                        session_id_out = part["sessionID"]
                     if event.get("type") == "step_finish":
                         tokens = part.get("tokens")
                         cost = part.get("cost")
             result: dict[str, Any] = {
-                "ok": proc.returncode == 0,
-                "exit_code": proc.returncode,
-                "session_id": session_id,
+                "ok": exit_code == 0,
+                "exit_code": exit_code,
+                "session_id": session_id_out,
                 "tokens": tokens,
                 "cost": cost,
             }
             if stderr:
                 result["stderr"] = stderr
-            if proc.returncode != 0:
-                result["error"] = stderr.strip() or f"Process exited with non-zero code {proc.returncode}"
+            if exit_code != 0:
+                result["error"] = stderr.strip() or f"Process exited with non-zero code {exit_code}"
             return json.dumps(result)
 
         combined = stdout
@@ -258,14 +323,14 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
         if len(combined) > TRUNCATION_LIMIT:
             combined = combined[-TRUNCATION_LIMIT:]
 
-        ok = (proc.returncode == 0)
+        ok = (exit_code == 0)
         error_msg = None
         if not ok:
-            error_msg = stderr.strip() or f"Process exited with non-zero code {proc.returncode}"
+            error_msg = stderr.strip() or f"Process exited with non-zero code {exit_code}"
 
         return json.dumps({
             "ok": ok,
-            "exit_code": proc.returncode,
+            "exit_code": exit_code,
             "output": combined,
             "error": error_msg,
         })
