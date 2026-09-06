@@ -28,10 +28,8 @@ def test_schema_structure():
     assert "parameters" in schema
     params = schema["parameters"]
     assert params["type"] == "object"
-    assert "goal" in params["properties"]
-    assert "workdir" in params["properties"]
-    assert "timeout" in params["properties"]
-    assert "model" in params["properties"]
+    for key in ["goal", "workdir", "timeout", "model", "agent", "files", "session", "continue", "format"]:
+        assert key in params["properties"]
     assert "goal" in params["required"]
 
 
@@ -56,6 +54,16 @@ def test_resolve_binary_via_nvm_fallback():
         assert bin_path == "/fake/nvm/v24.14.0/bin/opencode"
 
 
+def test_resolve_binary_via_home_fallback():
+    with patch("shutil.which", return_value=None), \
+         patch("glob.glob", return_value=[]), \
+         patch("os.path.expanduser", return_value="/fake/home/.opencode/bin/opencode"), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.access", return_value=True):
+        bin_path = tools.resolve_opencode_binary()
+        assert bin_path == "/fake/home/.opencode/bin/opencode"
+
+
 def test_binary_not_found():
     with patch.object(tools, "resolve_opencode_binary", return_value=None):
         res = json.loads(tools.opencode_delegate({"goal": "test"}))
@@ -64,10 +72,24 @@ def test_binary_not_found():
 
 
 def test_invalid_workdir():
-    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"):
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("os.path.isdir", return_value=False), \
+         patch("os.makedirs", side_effect=OSError("permission denied")):
         res = json.loads(tools.opencode_delegate({"goal": "test", "workdir": "/non/existent/path/xyz123"}))
         assert res["ok"] is False
         assert "Working directory does not exist" in res["error"]
+
+
+def test_workdir_precreated():
+    mock_proc = MagicMock(returncode=0, stdout="ok", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("os.path.isdir", return_value=False), \
+         patch("os.makedirs") as mock_makedirs, \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_delegate({"goal": "test", "workdir": "/tmp/new/dir"}))
+        assert res["ok"] is True
+        mock_makedirs.assert_called_once_with("/tmp/new/dir", exist_ok=True)
+        assert mock_run.call_args[1]["cwd"] == "/tmp/new/dir"
 
 
 def test_successful_run():
@@ -81,17 +103,106 @@ def test_successful_run():
         assert res["error"] is None
         mock_run.assert_called_once()
         args, kwargs = mock_run.call_args
-        assert args[0] == ["/fake/bin/opencode", "run", "write hello world"]
+        assert args[0] == ["/fake/bin/opencode", "run", "--dir", os.getcwd(), "write hello world"]
         assert kwargs["shell"] is False
 
 
 def test_command_with_model_flag():
     mock_proc = MagicMock(returncode=0, stdout="done", stderr="")
-    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"),          patch("subprocess.run", return_value=mock_proc) as mock_run:
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
         res = json.loads(tools.opencode_delegate({"goal": "test", "model": "custom-vllm"}))
         assert res["ok"] is True
         args, _ = mock_run.call_args
-        assert args[0] == ["/fake/bin/opencode", "run", "test", "--model", "custom-vllm"]
+        assert args[0] == ["/fake/bin/opencode", "run", "--dir", os.getcwd(), "test", "--model", "custom-vllm"]
+
+
+def test_command_with_agent_flag():
+    mock_proc = MagicMock(returncode=0, stdout="done", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_delegate({"goal": "test", "agent": "plan"}))
+        assert res["ok"] is True
+        args, _ = mock_run.call_args
+        assert args[0] == ["/fake/bin/opencode", "run", "--dir", os.getcwd(), "test", "--agent", "plan"]
+
+
+def test_command_with_files_flag():
+    mock_proc = MagicMock(returncode=0, stdout="done", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_delegate({"goal": "test", "files": ["a.txt", " b.txt ", "", 42, None]}))
+        assert res["ok"] is True
+        args, _ = mock_run.call_args
+        assert args[0] == ["/fake/bin/opencode", "run", "--dir", os.getcwd(), "test", "--file", "a.txt", "--file", "b.txt"]
+
+
+def test_command_with_session_flag():
+    mock_proc = MagicMock(returncode=0, stdout="done", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_delegate({"goal": "test", "session": "ses_abc123"}))
+        assert res["ok"] is True
+        args, _ = mock_run.call_args
+        assert args[0] == ["/fake/bin/opencode", "run", "--dir", os.getcwd(), "test", "--session", "ses_abc123"]
+
+
+def test_command_with_continue_flag():
+    mock_proc = MagicMock(returncode=0, stdout="done", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_delegate({"goal": "test", "continue": True}))
+        assert res["ok"] is True
+        args, _ = mock_run.call_args
+        assert args[0] == ["/fake/bin/opencode", "run", "--dir", os.getcwd(), "test", "--continue"]
+
+
+def test_session_takes_precedence_over_continue():
+    mock_proc = MagicMock(returncode=0, stdout="done", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_delegate({"goal": "test", "session": "ses_abc123", "continue": True}))
+        assert res["ok"] is True
+        args, _ = mock_run.call_args
+        assert args[0] == ["/fake/bin/opencode", "run", "--dir", os.getcwd(), "test", "--session", "ses_abc123"]
+
+
+def test_json_format_output():
+    ndjson = (
+        '{"type":"step_start","part":{"sessionID":"ses_xyz"}}\n'
+        '{"type":"step_finish","part":{"sessionID":"ses_xyz","tokens":{"input":10,"output":5},"cost":0.25}}\n'
+    )
+    mock_proc = MagicMock(returncode=0, stdout=ndjson, stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_delegate({"goal": "test", "format": "json"}))
+        assert res["ok"] is True
+        assert res["session_id"] == "ses_xyz"
+        assert res["tokens"] == {"input": 10, "output": 5}
+        assert res["cost"] == 0.25
+        assert "error" not in res
+        args, _ = mock_run.call_args
+        assert args[0] == ["/fake/bin/opencode", "run", "--dir", os.getcwd(), "test", "--format", "json"]
+
+
+def test_json_format_ignores_malformed_lines():
+    ndjson = "not json\n" + '{"type":"step_finish","part":{"sessionID":"ses_q"}}\n'
+    mock_proc = MagicMock(returncode=0, stdout=ndjson, stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc):
+        res = json.loads(tools.opencode_delegate({"goal": "test", "format": "json"}))
+        assert res["session_id"] == "ses_q"
+
+
+def test_json_format_error_result():
+    mock_proc = MagicMock(returncode=1, stdout="", stderr="boom")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc):
+        res = json.loads(tools.opencode_delegate({"goal": "test", "format": "json"}))
+        assert res["ok"] is False
+        assert res["exit_code"] == 1
+        assert res["error"] == "boom"
+        assert res["stderr"] == "boom"
 
 
 def test_timeout_clamping():

@@ -30,6 +30,27 @@ OPENCODE_DELEGATE = {
                 "type": "string",
                 "description": "Force a specific model via --model flag",
             },
+            "agent": {
+                "type": "string",
+                "description": "Agent name passed via --agent flag",
+            },
+            "files": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "File paths to attach as context via --file flag",
+            },
+            "session": {
+                "type": "string",
+                "description": "Session ID to continue via --session flag",
+            },
+            "continue": {
+                "type": "boolean",
+                "description": "Continue the last session via --continue flag",
+            },
+            "format": {
+                "type": "string",
+                "description": "Set to 'json' for structured output (session_id, tokens, cost)",
+            },
         },
         "required": ["goal"],
     },

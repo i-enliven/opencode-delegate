@@ -31,6 +31,10 @@ def resolve_opencode_binary() -> str | None:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
 
+    home_candidate = os.path.expanduser("~/.opencode/bin/opencode")
+    if os.path.isfile(home_candidate) and os.access(home_candidate, os.X_OK):
+        return home_candidate
+
     return None
 
 
@@ -43,11 +47,21 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
             - workdir (str, optional): Target working directory (default: current working directory).
             - timeout (int, optional): Timeout in seconds (default: 600, clamped 30-1800).
             - model (str, optional): Model name passed via --model.
+            - agent (str, optional): Agent name passed via --agent.
+            - files (list[str], optional): File paths passed via --file.
+            - session (str, optional): Session ID to continue via --session.
+            - continue (bool, optional): Continue the last session via --continue.
+            - format (str, optional): "json" for structured output with session_id,
+              tokens, and cost; default is plain text output.
         **kwargs: Additional keyword arguments for forward compatibility.
 
     Returns:
         JSON string conforming to:
         {"ok": bool, "exit_code": int | None, "output": str, "error": str | None}
+        or, when format is "json":
+        {"ok": bool, "exit_code": int | None, "session_id": str | None,
+         "tokens": object | None, "cost": number | None,
+         "stderr": str | None, "error": str | None}
     """
     try:
         if not isinstance(args, dict):
@@ -106,6 +120,26 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
         if model and isinstance(model, str) and model.strip():
             cmd.extend(["--model", model.strip()])
 
+        agent = args.get("agent")
+        if agent and isinstance(agent, str) and agent.strip():
+            cmd.extend(["--agent", agent.strip()])
+
+        files = args.get("files")
+        if isinstance(files, list):
+            for file_item in files:
+                if isinstance(file_item, str) and file_item.strip():
+                    cmd.extend(["--file", file_item.strip()])
+
+        session = args.get("session")
+        if session and isinstance(session, str) and session.strip():
+            cmd.extend(["--session", session.strip()])
+        elif args.get("continue") is True:
+            cmd.append("--continue")
+
+        use_json = args.get("format") == "json"
+        if use_json:
+            cmd.extend(["--format", "json"])
+
         env = os.environ.copy()
         bin_dir = os.path.dirname(bin_path)
         current_path = env.get("PATH", "")
@@ -124,8 +158,6 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
             )
         except subprocess.TimeoutExpired as exc:
             partial_out = exc.stdout or ""
-            if isinstance(partial_out, bytes):
-                partial_out = partial_out.decode("utf-8", errors="replace")
             if len(partial_out) > TRUNCATION_LIMIT:
                 partial_out = partial_out[-TRUNCATION_LIMIT:]
             return json.dumps({
@@ -144,6 +176,41 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
 
         stdout = proc.stdout or ""
         stderr = proc.stderr or ""
+
+        if use_json:
+            session_id = None
+            tokens = None
+            cost = None
+            for line in stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                part = event.get("part")
+                if isinstance(part, dict):
+                    if part.get("sessionID"):
+                        session_id = part["sessionID"]
+                    if event.get("type") == "step_finish":
+                        tokens = part.get("tokens")
+                        cost = part.get("cost")
+            result: dict[str, Any] = {
+                "ok": proc.returncode == 0,
+                "exit_code": proc.returncode,
+                "session_id": session_id,
+                "tokens": tokens,
+                "cost": cost,
+            }
+            if stderr:
+                result["stderr"] = stderr
+            if proc.returncode != 0:
+                result["error"] = stderr.strip() or f"Process exited with non-zero code {proc.returncode}"
+            return json.dumps(result)
+
         combined = stdout
         if stderr:
             if combined:
