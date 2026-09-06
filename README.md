@@ -34,17 +34,24 @@ Ensure the OpenCode CLI is installed (auto-detected in any of these locations):
 - `~/.nvm/versions/node/*/bin/opencode` (nvm-managed installs)
 - `~/.opencode/bin/opencode` (standard install script location)
 
-### 2. Install the Plugin in Hermes
-
-**Option A: Symlink from a local repository clone (Recommended for development)**
+### 2. Clone the Repository
 ```bash
-ln -s ~/Projects/opencode-delegate/hermes/plugins/opencode ~/.hermes/plugins/opencode
+git clone https://github.com/i-enliven/opencode-delegate.git
+cd opencode-delegate
 ```
 
-**Option B: Copy from a cloned repository**
+### 3. Install the Plugin in Hermes
+
+**Option A: Copy files into Hermes**
 ```bash
 mkdir -p ~/.hermes/plugins
-cp -r ~/Projects/opencode-delegate/hermes/plugins/opencode ~/.hermes/plugins/
+cp -r hermes/plugins/opencode ~/.hermes/plugins/
+```
+
+**Option B: Symlink (Recommended if you keep the repo updated)**
+```bash
+mkdir -p ~/.hermes/plugins
+ln -s "$(pwd)/hermes/plugins/opencode" ~/.hermes/plugins/opencode
 ```
 
 **Enable the plugin in Hermes**:
@@ -61,23 +68,35 @@ hermes plugins enable opencode
 
 The plugin declares four tools: `opencode_delegate`, `opencode_session_list`, `opencode_session_show`, and `opencode_session_delete`.
 
-### 3. Install the Skill in Hermes
+### 4. Install the Skill in Hermes
 The repo ships a Hermes skill file at `hermes/skills/opencode/SKILL.md` covering CLI workflows, prompts, and tool patterns:
 
-**Option A: Symlink the skill file (automatically tracks updates)**
+**Option A: Copy the skill file**
 ```bash
 mkdir -p ~/.hermes/skills
-ln -sf ~/Projects/opencode-delegate/hermes/skills/opencode ~/.hermes/skills/opencode
+cp -r hermes/skills/opencode ~/.hermes/skills/
 ```
 
-**Option B: Copy the skill file**
+**Option B: Symlink the skill (automatically tracks updates)**
 ```bash
-mkdir -p ~/.hermes/skills/opencode
-cp hermes/skills/opencode/SKILL.md ~/.hermes/skills/opencode/SKILL.md
+mkdir -p ~/.hermes/skills
+ln -s "$(pwd)/hermes/skills/opencode" ~/.hermes/skills/opencode
 ```
 
-*(For generic agent environments using `~/.agents/`, copy to `~/.agents/skills/opencode/SKILL.md`)*.
+*(For generic agent environments using `~/.agents/`, copy to `~/.agents/skills/opencode/`)*.
 
+---
+
+### Quick Install (One-Liner)
+To install both the plugin and skill without keeping the cloned repo:
+```bash
+git clone https://github.com/i-enliven/opencode-delegate.git /tmp/opencode-delegate && \
+  mkdir -p ~/.hermes/plugins ~/.hermes/skills && \
+  cp -r /tmp/opencode-delegate/hermes/plugins/opencode ~/.hermes/plugins/ && \
+  cp -r /tmp/opencode-delegate/hermes/skills/opencode ~/.hermes/skills/ && \
+  rm -rf /tmp/opencode-delegate && \
+  hermes plugins enable opencode
+```
 ## Tool usage
 
 Call `opencode_delegate` with a dict of arguments:
