@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 try:
-    from .hermes.plugins.opencode import schemas, tools
+    from . import schemas, tools
 except ImportError:
-    try:
-        from hermes.plugins.opencode import schemas, tools
-    except ImportError:
-        import schemas, tools
+    import schemas, tools
 
 
 def register(ctx):

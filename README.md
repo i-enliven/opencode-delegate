@@ -6,20 +6,77 @@ A Hermes plugin that delegates bounded coding tasks to the [OpenCode CLI](https:
 
 Runs `opencode run` as a subprocess with your goal, working directory, and options, then returns OpenCode's final report as JSON. OpenCode is an autonomous coding agent — this plugin lets another agent (or your tooling) hand off bounded tasks like "implement feature X", "fix bug Y", or "review this module" and get back a structured result. Session tools let you list, inspect, resume, and delete OpenCode sessions.
 
+## Repository Structure
+
+The repository is structured to map directly to Hermes' configuration directory (`~/.hermes/`):
+
+```
+opencode-delegate/
+├── hermes/
+│   ├── plugins/
+│   │   └── opencode/
+│   │       ├── __init__.py
+│   │       ├── plugin.yaml
+│   │       ├── schemas.py
+│   │       └── tools.py
+│   └── skills/
+│       └── opencode/
+│           └── SKILL.md
+├── test_opencode_delegate.py
+└── README.md
+```
+
 ## Installation
 
-1. Install OpenCode CLI (one of these locations is auto-detected):
-   - On `PATH` (`opencode`)
-   - `~/.nvm/versions/node/*/bin/opencode` (nvm-managed installs)
-   - `~/.opencode/bin/opencode` (standard install script location)
+### 1. Install OpenCode CLI
+Ensure the OpenCode CLI is installed (auto-detected in any of these locations):
+- On `PATH` (`opencode`)
+- `~/.nvm/versions/node/*/bin/opencode` (nvm-managed installs)
+- `~/.opencode/bin/opencode` (standard install script location)
 
-2. Install the plugin into your Hermes plugin directory (or any directory Hermes loads plugins from):
+### 2. Install the Plugin in Hermes
 
-   ```bash
-   git clone https://github.com/i-enliven/opencode-delegate.git
-   ```
+**Option A: Symlink from a local repository clone (Recommended for development)**
+```bash
+ln -s ~/Projects/opencode-delegate/hermes/plugins/opencode ~/.hermes/plugins/opencode
+```
 
-   The repo ships `plugin.yaml`, which declares the tool `opencode_delegate`.
+**Option B: Copy from a cloned repository**
+```bash
+mkdir -p ~/.hermes/plugins
+cp -r ~/Projects/opencode-delegate/hermes/plugins/opencode ~/.hermes/plugins/
+```
+
+**Enable the plugin in Hermes**:
+Add `opencode` to `plugins.enabled` in `~/.hermes/config.yaml`:
+```yaml
+plugins:
+  enabled:
+    - opencode
+```
+Or enable it via the Hermes CLI:
+```bash
+hermes plugins enable opencode
+```
+
+The plugin declares four tools: `opencode_delegate`, `opencode_session_list`, `opencode_session_show`, and `opencode_session_delete`.
+
+### 3. Install the Skill in Hermes
+The repo ships a Hermes skill file at `hermes/skills/opencode/SKILL.md` covering CLI workflows, prompts, and tool patterns:
+
+**Option A: Symlink the skill file (automatically tracks updates)**
+```bash
+mkdir -p ~/.hermes/skills
+ln -sf ~/Projects/opencode-delegate/hermes/skills/opencode ~/.hermes/skills/opencode
+```
+
+**Option B: Copy the skill file**
+```bash
+mkdir -p ~/.hermes/skills/opencode
+cp hermes/skills/opencode/SKILL.md ~/.hermes/skills/opencode/SKILL.md
+```
+
+*(For generic agent environments using `~/.agents/`, copy to `~/.agents/skills/opencode/SKILL.md`)*.
 
 ## Tool usage
 
@@ -111,17 +168,14 @@ Returns `{"ok": true}`.
 
 - Output is truncated to the last 8000 characters.
 - Timeouts are clamped between 30 and 1800 seconds.
+- Standard input is detached (`stdin=subprocess.DEVNULL`) to prevent blocking on non-interactive executions.
 - A missing `workdir` is pre-created (`makedirs(exist_ok=True)`).
 - The subprocess PATH is augmented with the resolved binary's directory so child processes can find sibling tools.
 - All failures return `{"ok": false, ...}` with a descriptive `error` — the handler never raises.
 
 ## Bundled skill
 
-The repo also ships a Hermes skill file at `skills/opencode/SKILL.md` — a usage guide for OpenCode CLI covering one-shot tasks, interactive sessions, PR review workflows, parallel work patterns, and common flags. Copy it into your skills directory (e.g. `~/.agents/skills/opencode/SKILL.md`) to make it available to your agent:
-
-```bash
-cp skills/opencode/SKILL.md ~/.agents/skills/opencode/SKILL.md
-```
+The repo ships an OpenCode skill file at `hermes/skills/opencode/SKILL.md` — a comprehensive usage guide for OpenCode CLI covering one-shot tasks, interactive sessions, PR review workflows, parallel work patterns, and common flags. See [Installation](#3-install-the-skill-in-hermes) above for copying or symlinking it into `~/.hermes/skills/opencode/SKILL.md`.
 
 ## Development
 

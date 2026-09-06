@@ -12,7 +12,7 @@ import pytest
 import sys
 from pathlib import Path
 
-plugin_dir = str(Path(__file__).resolve().parent)
+plugin_dir = str(Path(__file__).resolve().parent / "hermes" / "plugins" / "opencode")
 if plugin_dir not in sys.path:
     sys.path.insert(0, plugin_dir)
 
