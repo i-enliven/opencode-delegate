@@ -252,9 +252,154 @@ def test_output_truncation():
 def test_registration():
     mock_ctx = MagicMock()
     register(mock_ctx)
-    mock_ctx.register_tool.assert_called_once_with(
-        name="opencode_delegate",
-        toolset="opencode-delegate",
-        schema=schemas.OPENCODE_DELEGATE,
-        handler=tools.opencode_delegate,
-    )
+    assert mock_ctx.register_tool.call_count == 4
+    calls = mock_ctx.register_tool.call_args_list
+    expected = [
+        ("opencode_delegate", schemas.OPENCODE_DELEGATE, tools.opencode_delegate),
+        ("opencode_session_list", schemas.OPENCODE_SESSION_LIST, tools.opencode_session_list),
+        ("opencode_session_show", schemas.OPENCODE_SESSION_SHOW, tools.opencode_session_show),
+        ("opencode_session_delete", schemas.OPENCODE_SESSION_DELETE, tools.opencode_session_delete),
+    ]
+    for (name, schema, handler), call in zip(expected, calls):
+        kwargs = call.kwargs
+        assert kwargs["name"] == name
+        assert kwargs["schema"] == schema
+        assert kwargs["handler"] == handler
+        assert kwargs["toolset"] == "opencode-delegate"
+
+
+def test_session_list_success():
+    sessions = [
+        {"id": "ses_a", "title": "T1", "updated": 1, "created": 0, "directory": "/tmp"},
+        {"id": "ses_b", "title": "T2", "updated": 2, "created": 0, "directory": "/home"},
+    ]
+    mock_proc = MagicMock(returncode=0, stdout=json.dumps(sessions), stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_session_list({}))
+        assert res["ok"] is True
+        assert len(res["sessions"]) == 2
+        assert res["error"] is None
+        args, _ = mock_run.call_args
+        assert args[0] == ["/fake/bin/opencode", "session", "list", "--format", "json", "-n", "20"]
+
+
+def test_session_list_limit_clamping():
+    mock_proc = MagicMock(returncode=0, stdout="[]", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        tools.opencode_session_list({"limit": 0})
+        assert mock_run.call_args[0][0][-1] == "1"
+        tools.opencode_session_list({"limit": 500})
+        assert mock_run.call_args[0][0][-1] == "100"
+        tools.opencode_session_list({"limit": "bad"})
+        assert mock_run.call_args[0][0][-1] == "20"
+
+
+def test_session_list_workdir_filter():
+    sessions = [
+        {"id": "ses_a", "directory": "/tmp"},
+        {"id": "ses_b", "directory": "/home"},
+    ]
+    mock_proc = MagicMock(returncode=0, stdout=json.dumps(sessions), stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc):
+        res = json.loads(tools.opencode_session_list({"workdir": "/tmp"}))
+        assert res["ok"] is True
+        assert [s["id"] for s in res["sessions"]] == ["ses_a"]
+
+
+def test_session_list_binary_missing():
+    with patch.object(tools, "resolve_opencode_binary", return_value=None):
+        res = json.loads(tools.opencode_session_list({}))
+        assert res["ok"] is False
+        assert "not installed or not found" in res["error"]
+
+
+def test_session_list_bad_output():
+    mock_proc = MagicMock(returncode=0, stdout="not json", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc):
+        res = json.loads(tools.opencode_session_list({}))
+        assert res["ok"] is False
+        assert "parse" in res["error"]
+
+
+def test_session_show_success():
+    export_data = {
+        "info": {"id": "ses_a", "title": "T1", "cost": 0},
+        "messages": [
+            {"info": {"role": "user", "time": {"created": 1}}, "parts": [{"type": "text", "text": "hello"}]},
+            {"info": {"role": "assistant", "time": {"created": 2}}, "parts": [{"type": "text", "text": "world"}]},
+        ],
+    }
+    mock_proc = MagicMock(returncode=0, stdout="Exporting session: ses_a\n" + json.dumps(export_data), stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_session_show({"session": "ses_a"}))
+        assert res["ok"] is True
+        assert res["session"]["id"] == "ses_a"
+        assert len(res["messages"]) == 2
+        assert res["messages"][0]["role"] == "user"
+        assert res["messages"][0]["text"] == "hello"
+        assert res["messages"][1]["text"] == "world"
+        args, _ = mock_run.call_args
+        assert args[0] == ["/fake/bin/opencode", "export", "ses_a"]
+
+
+def test_session_show_last_messages_clamping():
+    export_data = {
+        "info": {"id": "ses_a"},
+        "messages": [{"info": {"role": f"r{i}"}, "parts": []} for i in range(20)],
+    }
+    mock_proc = MagicMock(returncode=0, stdout=json.dumps(export_data), stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_session_show({"session": "ses_a", "last_messages": 5}))
+        assert res["ok"] is True
+        assert len(res["messages"]) == 5
+        assert res["messages"][0]["role"] == "r15"
+        tools.opencode_session_show({"session": "ses_a", "last_messages": 500})
+        assert len(json.loads(tools.opencode_session_show({"session": "ses_a", "last_messages": 500}))["messages"]) == 20
+
+
+def test_session_show_missing_session():
+    for bad_args in [None, {}, {"session": ""}, {"session": "   "}, {"session": None}]:
+        res = json.loads(tools.opencode_session_show(bad_args))
+        assert res["ok"] is False
+        assert "session" in res["error"]
+
+
+def test_session_show_bad_output():
+    mock_proc = MagicMock(returncode=0, stdout="garbage without json", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc):
+        res = json.loads(tools.opencode_session_show({"session": "ses_a"}))
+        assert res["ok"] is False
+        assert "parse" in res["error"]
+
+
+def test_session_delete_success():
+    mock_proc = MagicMock(returncode=0, stdout="", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        res = json.loads(tools.opencode_session_delete({"session": "ses_a"}))
+        assert res["ok"] is True
+        args, _ = mock_run.call_args
+        assert args[0] == ["/fake/bin/opencode", "session", "delete", "ses_a"]
+
+
+def test_session_delete_missing_session():
+    for bad_args in [None, {}, {"session": ""}, {"session": None}]:
+        res = json.loads(tools.opencode_session_delete(bad_args))
+        assert res["ok"] is False
+        assert "session" in res["error"]
+
+
+def test_session_delete_nonzero_exit():
+    mock_proc = MagicMock(returncode=1, stdout="", stderr="session not found")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc):
+        res = json.loads(tools.opencode_session_delete({"session": "ses_a"}))
+        assert res["ok"] is False
+        assert "session not found" in res["error"]

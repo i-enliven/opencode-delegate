@@ -85,7 +85,7 @@ List OpenCode sessions, most recent first:
 {"limit": 20, "workdir": "~/projects/my-app"}
 ```
 
-Both parameters are optional. Returns `{"ok": true, "sessions": [{"id", "title", "updated", "created", "directory"}]}`.
+Both parameters are optional (`limit` default 20, clamped 1–100; `workdir` is an exact-match filter on the session's directory). Returns `{"ok": true, "sessions": [{"id", "title", "updated", "created", "directory"}]}`.
 
 ### opencode_session_show
 
@@ -95,7 +95,7 @@ Show a session's details and recent transcript (via `opencode export`):
 {"session": "ses_abc123", "last_messages": 10}
 ```
 
-Returns `{"ok": true, "session": {...}, "messages": [{"role", "text", "created"}]}`.
+Returns `{"ok": true, "session": {...}, "messages": [{"role", "text", "created"}]}` (`last_messages` default 10, clamped 1–100).
 
 ### opencode_session_delete
 

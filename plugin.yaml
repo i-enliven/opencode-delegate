@@ -1,5 +1,8 @@
 name: opencode-delegate
-version: 1.0.2
-description: Delegate coding tasks to OpenCode CLI (opencode run)
+version: 1.1.0
+description: Delegate coding tasks to OpenCode CLI (opencode run) and manage OpenCode sessions
 provides_tools:
   - opencode_delegate
+  - opencode_session_list
+  - opencode_session_show
+  - opencode_session_delete

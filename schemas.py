@@ -55,3 +55,65 @@ OPENCODE_DELEGATE = {
         "required": ["goal"],
     },
 }
+
+OPENCODE_SESSION_LIST = {
+    "name": "opencode_session_list",
+    "description": (
+        "List OpenCode sessions, most recent first. Use to find session IDs "
+        "for resuming a previous OpenCode conversation. Optionally filter by "
+        "working directory."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "limit": {
+                "type": "integer",
+                "description": "Max sessions to return (default 20, max 100)",
+            },
+            "workdir": {
+                "type": "string",
+                "description": "Only list sessions created in this directory",
+            },
+        },
+        "required": [],
+    },
+}
+
+OPENCODE_SESSION_SHOW = {
+    "name": "opencode_session_show",
+    "description": (
+        "Show details and recent transcript of an OpenCode session. Use to "
+        "inspect what happened in a session before resuming it."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session": {
+                "type": "string",
+                "description": "Session ID to inspect",
+            },
+            "last_messages": {
+                "type": "integer",
+                "description": "Number of recent messages to include (default 10, max 100)",
+            },
+        },
+        "required": ["session"],
+    },
+}
+
+OPENCODE_SESSION_DELETE = {
+    "name": "opencode_session_delete",
+    "description": (
+        "Delete an OpenCode session by ID. Permanent; cannot be undone."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session": {
+                "type": "string",
+                "description": "Session ID to delete",
+            },
+        },
+        "required": ["session"],
+    },
+}
