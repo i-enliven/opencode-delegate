@@ -48,8 +48,13 @@ def get_opencode_db_path() -> str:
         return os.path.join(os.path.expanduser(xdg_data), "opencode", "opencode.db")
     return os.path.expanduser("~/.local/share/opencode/opencode.db")
 
-
-
+def _to_str(val: Any) -> str:
+    """Safely convert string, bytes, or None to string."""
+    if val is None:
+        return ""
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="replace")
+    return str(val)
 def _get_session_dir(session_id: str) -> str | None:
     """Look up the recorded directory for an OpenCode session.
 
@@ -123,7 +128,7 @@ def _run_cli(cmd: list[str], timeout: int = SESSION_TIMEOUT, cwd: str | None = N
         return None, "", f"Execution timed out after {timeout} seconds"
     except FileNotFoundError:
         return None, "", "opencode CLI binary not found or executable cannot be invoked"
-    return proc.returncode, proc.stdout or "", proc.stderr or ""
+    return proc.returncode, _to_str(proc.stdout), _to_str(proc.stderr)
 
 
 def _error(error: str) -> str:
@@ -258,7 +263,7 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
                 start_new_session=True,
             )
         except subprocess.TimeoutExpired as exc:
-            partial_out = exc.stdout or ""
+            partial_out = _to_str(exc.stdout)
             if len(partial_out) > TRUNCATION_LIMIT:
                 partial_out = partial_out[-TRUNCATION_LIMIT:]
             return json.dumps({
@@ -276,9 +281,8 @@ def opencode_delegate(args: dict[str, Any] | None, **kwargs: Any) -> str:
             })
 
         exit_code = proc.returncode
-        stdout = proc.stdout or ""
-        stderr = proc.stderr or ""
-
+        stdout = _to_str(proc.stdout)
+        stderr = _to_str(proc.stderr)
         if use_json:
             session_id_out = None
             tokens = None

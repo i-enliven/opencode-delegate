@@ -233,6 +233,17 @@ def test_timeout_expired():
         assert res["output"] == "partial output"
 
 
+
+def test_timeout_expired_with_bytes_output():
+    """Ensure raw bytes output on TimeoutExpired is safely decoded and JSON-serializable."""
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["opencode"], timeout=30, output=b"partial bytes output")):
+        res = json.loads(tools.opencode_delegate({"goal": "test bytes timeout", "timeout": 30}))
+        assert res["ok"] is False
+        assert res["exit_code"] is None
+        assert "timed out after 30 seconds" in res["error"]
+        assert res["output"] == "partial bytes output"
+
 def test_file_not_found_on_exec():
     with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"),          patch("subprocess.run", side_effect=FileNotFoundError("No such file")):
         res = json.loads(tools.opencode_delegate({"goal": "test"}))
