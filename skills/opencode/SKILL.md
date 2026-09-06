@@ -1,7 +1,7 @@
 ---
 name: opencode
-description: "Delegate coding to OpenCode CLI (features, PR review)."
-version: 1.2.0
+description: "Delegate coding to OpenCode via the opencode-delegate plugin (features, PR review)."
+version: 1.3.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -11,209 +11,142 @@ metadata:
     related_skills: [claude-code, codex, hermes-agent]
 ---
 
-# OpenCode CLI
+# OpenCode via opencode-delegate plugin
 
-Use [OpenCode](https://opencode.ai) as an autonomous coding worker orchestrated by Hermes terminal/process tools. OpenCode is a provider-agnostic, open-source AI coding agent with a TUI and CLI.
+Use the `opencode_delegate` tool (from the opencode-delegate plugin) to hand bounded coding tasks to [OpenCode](https://opencode.ai), an autonomous coding agent. The plugin wraps `opencode run` as a subprocess and returns a structured JSON result — no terminal/process tools needed.
 
 ## When to Use
 
 - User explicitly asks to use OpenCode
 - You want an external coding agent to implement/refactor/review code
-- You need long-running coding sessions with progress checks
-- You want parallel task execution in isolated workdirs/worktrees
+- You want parallel task execution in isolated workdirs
+- You need a bounded, one-shot delegation with a structured result
 
 ## Prerequisites
 
-- OpenCode installed: `npm i -g opencode-ai@latest` or `brew install anomalyco/tap/opencode`
-- Auth configured: `opencode auth login` or set provider env vars (OPENROUTER_API_KEY, etc.)
-- Verify: `opencode auth list` should show at least one provider
+- The opencode-delegate plugin installed and registered (provides the `opencode_delegate` tool)
+- OpenCode CLI installed — the plugin auto-detects it on `PATH`, in `~/.nvm/versions/node/*/bin/opencode`, or `~/.opencode/bin/opencode`
+- Auth configured: `opencode auth login` or provider env vars (OPENROUTER_API_KEY, etc.)
 - Git repository for code tasks (recommended)
-- `pty=true` for interactive TUI sessions
 
-## Binary Resolution (Important)
-
-Shell environments may resolve different OpenCode binaries. If behavior differs between your terminal and Hermes, check:
+## Basic One-Shot Task
 
 ```
-terminal(command="which -a opencode")
-terminal(command="opencode --version")
+opencode_delegate(goal="Add retry logic to API calls and update tests", workdir="~/project")
 ```
 
-If needed, pin an explicit binary path:
+`workdir` defaults to the current session cwd; a missing directory is pre-created automatically.
+
+## Attaching Context Files
+
+Use `files` to hand OpenCode specific files as context:
 
 ```
-terminal(command="$HOME/.opencode/bin/opencode run '...'", workdir="~/project", pty=true)
+opencode_delegate(goal="Review this config for security issues", files=["config.yaml", ".env.example"])
 ```
 
-## One-Shot Tasks
-
-Use `opencode run` for bounded, non-interactive tasks:
+## Forcing a Model or Agent
 
 ```
-terminal(command="opencode run 'Add retry logic to API calls and update tests'", workdir="~/project")
+opencode_delegate(goal="Refactor auth module", model="openrouter/anthropic/claude-sonnet-4")
+opencode_delegate(goal="Draft a migration plan", agent="plan")
 ```
 
-Attach context files with `-f`:
+## Structured Output (session, tokens, cost)
+
+Pass `format="json"` to get machine-readable results including the OpenCode session ID and token usage:
 
 ```
-terminal(command="opencode run 'Review this config for security issues' -f config.yaml -f .env.example", workdir="~/project")
+opencode_delegate(goal="Fix issue #101", format="json")
+# → {"ok": true, "exit_code": 0, "session_id": "ses_abc123", "tokens": {...}, "cost": 0}
 ```
 
-Show model thinking with `--thinking`:
+## Continuing a Session
+
+Feed the `session_id` from a JSON-format run back in as `session` to continue that conversation in a follow-up call:
 
 ```
-terminal(command="opencode run 'Debug why tests fail in CI' --thinking", workdir="~/project")
+opencode_delegate(goal="Now add error handling for token expiry", session="ses_abc123")
 ```
 
-Force a specific model:
+Or continue the most recent session with `continue=true`. `session` takes precedence over `continue`.
 
-```
-terminal(command="opencode run 'Refactor auth module' --model openrouter/anthropic/claude-sonnet-4", workdir="~/project")
-```
+## Parameter Reference
 
-## Interactive Sessions (Background)
+| Parameter  | Type     | Description |
+|------------|----------|-------------|
+| `goal`     | string   | Required. The coding task for OpenCode |
+| `workdir`  | string   | Working directory (default: session cwd); created if missing |
+| `timeout`  | integer  | Seconds to allow; default 600, clamped 30–1800 |
+| `model`    | string   | Force a specific model via `--model` |
+| `agent`    | string   | Agent name via `--agent` (e.g. `build`, `plan`) |
+| `files`    | string[] | File paths attached via `--file` |
+| `session`  | string   | Session ID to continue via `--session` |
+| `continue` | boolean  | Continue the last session via `--continue` |
+| `format`   | string   | `json` for structured output (session_id, tokens, cost) |
 
-For iterative work requiring multiple exchanges, start the TUI in background:
+## Response Format
 
-```
-terminal(command="opencode", workdir="~/project", background=true, pty=true)
-# Returns session_id
+Default (plain text): `{"ok": bool, "exit_code": int|null, "output": str, "error": str|null}`
 
-# Send a prompt
-process(action="submit", session_id="<id>", data="Implement OAuth refresh flow and add tests")
+With `format="json"`: `{"ok": bool, "exit_code": int|null, "session_id": str|null, "tokens": obj|null, "cost": num|null, "stderr": str|null, "error": str|null}`
 
-# Monitor progress
-process(action="poll", session_id="<id>")
-process(action="log", session_id="<id>")
-
-# Send follow-up input
-process(action="submit", session_id="<id>", data="Now add error handling for token expiry")
-
-# Exit cleanly — Ctrl+C
-process(action="write", session_id="<id>", data="\x03")
-# Or just kill the process
-process(action="kill", session_id="<id>")
-```
-
-**Important:** Do NOT use `/exit` — it is not a valid OpenCode command and will open an agent selector dialog instead. Use Ctrl+C (`\x03`) or `process(action="kill")` to exit.
-
-### TUI Keybindings
-
-| Key | Action |
-|-----|--------|
-| `Enter` | Submit message (press twice if needed) |
-| `Tab` | Switch between agents (build/plan) |
-| `Ctrl+P` | Open command palette |
-| `Ctrl+X L` | Switch session |
-| `Ctrl+X M` | Switch model |
-| `Ctrl+X N` | New session |
-| `Ctrl+X E` | Open editor |
-| `Ctrl+C` | Exit OpenCode |
-
-### Resuming Sessions
-
-After exiting, OpenCode prints a session ID. Resume with:
-
-```
-terminal(command="opencode -c", workdir="~/project", background=true, pty=true)  # Continue last session
-terminal(command="opencode -s ses_abc123", workdir="~/project", background=true, pty=true)  # Specific session
-```
-
-## Common Flags
-
-| Flag | Use |
-|------|-----|
-| `run 'prompt'` | One-shot execution and exit |
-| `--continue` / `-c` | Continue the last OpenCode session |
-| `--session <id>` / `-s` | Continue a specific session |
-| `--agent <name>` | Choose OpenCode agent (build or plan) |
-| `--model provider/model` | Force specific model |
-| `--format json` | Machine-readable output/events |
-| `--file <path>` / `-f` | Attach file(s) to the message |
-| `--thinking` | Show model thinking blocks |
-| `--variant <level>` | Reasoning effort (high, max, minimal) |
-| `--title <name>` | Name the session |
-| `--attach <url>` | Connect to a running opencode server |
-
-## Procedure
-
-1. Verify tool readiness:
-   - `terminal(command="opencode --version")`
-   - `terminal(command="opencode auth list")`
-2. For bounded tasks, use `opencode run '...'` (no pty needed).
-3. For iterative tasks, start `opencode` with `background=true, pty=true`.
-4. Monitor long tasks with `process(action="poll"|"log")`.
-5. If OpenCode asks for input, respond via `process(action="submit", ...)`.
-6. Exit with `process(action="write", data="\x03")` or `process(action="kill")`.
-7. Summarize file changes, test results, and next steps back to user.
+Output is truncated to the last 8000 characters. All failures return `ok: false` with a descriptive `error` — the tool never raises.
 
 ## PR Review Workflow
 
-OpenCode has a built-in PR command:
+Review a PR in a temporary clone for isolation:
 
 ```
-terminal(command="opencode pr 42", workdir="~/project", pty=true)
+opencode_delegate(
+  goal="Review this PR vs main. Report bugs, security risks, test gaps, and style issues.",
+  workdir="/tmp/pr-review-42",
+  files=[".gitignore", "README.md"]
+)
 ```
 
-Or review in a temporary clone for isolation:
-
-```
-terminal(command="REVIEW=$(mktemp -d) && git clone https://github.com/user/repo.git $REVIEW && cd $REVIEW && opencode run 'Review this PR vs main. Report bugs, security risks, test gaps, and style issues.' -f $(git diff origin/main --name-only | head -20 | tr '\n' ' ')", pty=true)
-```
+Clone the repo into the workdir first (e.g. via a terminal command), then delegate the review against it.
 
 ## Parallel Work Pattern
 
-Use separate workdirs/worktrees to avoid collisions:
+Use separate workdirs to avoid collisions; run multiple delegations and collect results:
 
 ```
-terminal(command="opencode run 'Fix issue #101 and commit'", workdir="/tmp/issue-101", background=true, pty=true)
-terminal(command="opencode run 'Add parser regression tests and commit'", workdir="/tmp/issue-102", background=true, pty=true)
-process(action="list")
+opencode_delegate(goal="Fix issue #101 and commit", workdir="/tmp/issue-101")
+opencode_delegate(goal="Add parser regression tests and commit", workdir="/tmp/issue-102")
 ```
 
 ## Session & Cost Management
 
-List past sessions:
-
-```
-terminal(command="opencode session list")
-```
-
-Check token usage and costs:
-
-```
-terminal(command="opencode stats")
-terminal(command="opencode stats --days 7 --models anthropic/claude-sonnet-4")
-```
+- Token usage and cost per run: use `format="json"` and read `tokens`/`cost` from the result
+- List past sessions / aggregate stats: use the CLI directly (`opencode session list`, `opencode stats`) via a terminal command — the plugin does not expose these
 
 ## Pitfalls
 
-- Interactive `opencode` (TUI) sessions require `pty=true`. The `opencode run` command does NOT need pty.
-- `/exit` is NOT a valid command — it opens an agent selector. Use Ctrl+C to exit the TUI.
-- PATH mismatch can select the wrong OpenCode binary/model config.
-- If OpenCode appears stuck, inspect logs before killing:
-  - `process(action="log", session_id="<id>")`
-- Avoid sharing one working directory across parallel OpenCode sessions.
-- Enter may need to be pressed twice to submit in the TUI (once to finalize text, once to send).
+- The plugin runs `opencode run` (one-shot, non-interactive). It does NOT support interactive TUI sessions — for iterative work, use `session` continuation instead.
+- Binary resolution is automatic (PATH → nvm → `~/.opencode/bin`), but if behavior differs between environments, verify with `which -a opencode` and `opencode --version`.
+- Avoid sharing one working directory across parallel OpenCode delegations.
+- Long tasks: raise `timeout` (max 1800s) rather than retrying; on timeout the partial output is returned with `ok: false`.
+- If OpenCode appears stuck, the result will eventually time out — inspect OpenCode logs directly via the CLI if needed.
 
 ## Verification
 
 Smoke test:
 
 ```
-terminal(command="opencode run 'Respond with exactly: OPENCODE_SMOKE_OK'")
+opencode_delegate(goal="Respond with exactly: OPENCODE_SMOKE_OK")
 ```
 
 Success criteria:
-- Output includes `OPENCODE_SMOKE_OK`
-- Command exits without provider/model errors
+- Result `ok: true` and output includes `OPENCODE_SMOKE_OK`
+- No provider/model errors in `error`
 - For code tasks: expected files changed and tests pass
 
 ## Rules
 
-1. Prefer `opencode run` for one-shot automation — it's simpler and doesn't need pty.
-2. Use interactive background mode only when iteration is needed.
-3. Always scope OpenCode sessions to a single repo/workdir.
-4. For long tasks, provide progress updates from `process` logs.
-5. Report concrete outcomes (files changed, tests, remaining risks).
-6. Exit interactive sessions with Ctrl+C or kill, never `/exit`.
+1. Prefer `opencode_delegate` over raw `opencode run` terminal commands — it gives structured results, timeout control, and automatic binary resolution.
+2. Use `format="json"` when you need the session ID, token counts, or cost.
+3. Always scope a delegation to a single repo/workdir; use separate workdirs for parallel tasks.
+4. For long tasks, provide progress updates by re-delegating with `session` continuation.
+5. Report concrete outcomes (files changed, tests, remaining risks) back to the user.
+6. Use the CLI directly (terminal) only for things the plugin does not expose: interactive TUI, `opencode session list`, `opencode stats`, `opencode pr`.
