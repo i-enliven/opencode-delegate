@@ -225,6 +225,7 @@ When the skill is active, agents follow this structured lifecycle:
 2. **Execute Delegation**: The agent invokes `opencode_delegate` (using `format="json"` when multi-turn session tracking is required).
 3. **Session Continuation**: For follow-up tasks, the agent feeds `session="ses_..."` back into `opencode_delegate`. The plugin automatically aligns the execution directory with the session's creation path.
 4. **Independent Disk Verification**: Before reporting success to the user, the agent inspects the file modifications (`git diff`, `git status`) and executes automated tests on disk.
+5. **Timeout Recovery Protocol**: If an execution times out, the agent inspects the partial transcript via `opencode_session_list` and `opencode_session_show`, then either resumes it with a higher timeout or deletes the incomplete session before creating a new one.
 
 ## Development
 

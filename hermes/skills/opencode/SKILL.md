@@ -33,6 +33,7 @@ Delegate bounded coding tasks, code reviews, and multi-turn refactoring to [Open
    - **Multi-turn / Iterative workflow**: Call `opencode_delegate(goal=..., format="json")` to capture `session_id`, then continue via `opencode_delegate(goal=..., session=session_id)`.
    - **Session Discovery**: Call `opencode_session_list(workdir=...)` to locate prior session IDs.
    - **Transcript Review**: Call `opencode_session_show(session=..., last_messages=10)` to inspect previous dialogue before continuing.
+   - **Timeout Recovery**: If a delegation times out (`ok: false`), list sessions with `opencode_session_list(workdir=...)`, inspect with `opencode_session_show`, and either resume (`session=...`) with increased timeout or delete (`opencode_session_delete`) before starting a new session.
 
 2. **Scope the Working Directory**:
    - Explicitly specify `workdir` whenever possible. Missing directories are auto-created.
@@ -153,7 +154,13 @@ opencode_session_delete(session="ses_3b8a10f9")
 ## Critical Rules & Guardrails for Agents
 
 1. **Verify on Disk**: Never take OpenCode's claims for granted. After `opencode_delegate` finishes with `ok: true`, check `git status`, inspect file modifications, and run test suites before marking your task complete.
-2. **Handle Timeouts Gracefully**: On timeout, the tool returns `ok: false` with partial captured `output` and `error="Task timed out after ...s"`. If a task is complex, specify `timeout=1200` or `1800` rather than retrying immediately.
+2. **Timeout Recovery Protocol (List, Inspect, Resume or Delete)**:
+   - When a delegation times out (`ok: false` with a timeout error), **never immediately start a brand-new unmanaged delegation**. OpenCode records sessions in its database even if the process was terminated by timeout.
+   - **Step 1 (Find)**: Call `opencode_session_list(workdir=...)` to identify the timed-out session ID.
+   - **Step 2 (Inspect)**: Call `opencode_session_show(session=session_id, last_messages=5)` to verify what work OpenCode completed prior to timeout.
+   - **Step 3 (Resolve)**:
+     - **To continue work**: Resume the session via `opencode_delegate(goal="Continue from where you left off...", session=session_id, timeout=1200)` using a higher timeout allowance.
+     - **To start fresh**: Explicitly delete the stale session first via `opencode_session_delete(session=session_id)` to avoid orphan sessions, conflicting git states, or directory locking.
 3. **Structured vs Text Tradeoff**:
    - `format="json"` exposes `session_id` but does not include conversational assistant text in `output`.
    - Default format includes conversational text in `output`, but omits `session_id`.
