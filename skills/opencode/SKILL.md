@@ -1,7 +1,7 @@
 ---
 name: opencode
-description: "Delegate coding to OpenCode via the opencode-delegate plugin (features, PR review)."
-version: 1.3.0
+description: "Delegate coding to OpenCode via the opencode-delegate plugin (features, PR review, session management)."
+version: 1.4.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,7 +13,16 @@ metadata:
 
 # OpenCode via opencode-delegate plugin
 
-Use the `opencode_delegate` tool (from the opencode-delegate plugin) to hand bounded coding tasks to [OpenCode](https://opencode.ai), an autonomous coding agent. The plugin wraps `opencode run` as a subprocess and returns a structured JSON result — no terminal/process tools needed.
+Use the opencode-delegate plugin tools to hand bounded coding tasks to [OpenCode](https://opencode.ai), an autonomous coding agent, and to manage OpenCode sessions. The plugin wraps `opencode run` as a subprocess and returns structured JSON results — no terminal/process tools needed.
+
+## Tools Provided
+
+| Tool | Purpose |
+|------|---------|
+| `opencode_delegate` | Delegate a bounded coding task to OpenCode |
+| `opencode_session_list` | List OpenCode sessions (find IDs to resume) |
+| `opencode_session_show` | Inspect a session's details and recent transcript |
+| `opencode_session_delete` | Delete a session by ID (permanent) |
 
 ## When to Use
 
@@ -21,10 +30,11 @@ Use the `opencode_delegate` tool (from the opencode-delegate plugin) to hand bou
 - You want an external coding agent to implement/refactor/review code
 - You want parallel task execution in isolated workdirs
 - You need a bounded, one-shot delegation with a structured result
+- You need to find, inspect, resume, or clean up OpenCode sessions
 
 ## Prerequisites
 
-- The opencode-delegate plugin installed and registered (provides the `opencode_delegate` tool)
+- The opencode-delegate plugin installed and registered (provides the four tools above)
 - OpenCode CLI installed — the plugin auto-detects it on `PATH`, in `~/.nvm/versions/node/*/bin/opencode`, or `~/.opencode/bin/opencode`
 - Auth configured: `opencode auth login` or provider env vars (OPENROUTER_API_KEY, etc.)
 - Git repository for code tasks (recommended)
@@ -70,6 +80,33 @@ opencode_delegate(goal="Now add error handling for token expiry", session="ses_a
 ```
 
 Or continue the most recent session with `continue=true`. `session` takes precedence over `continue`.
+
+Note: a resumed run with `format="json"` returns only structured fields (session_id, tokens, cost) — use plain-text format (omit `format`) when you need the reply text itself.
+
+## Session Management
+
+Find sessions to resume:
+
+```
+opencode_session_list(limit=20)
+opencode_session_list(workdir="~/project")  # only sessions in that directory
+# → {"ok": true, "sessions": [{"id": "ses_abc123", "title": "...", "updated": ..., "created": ..., "directory": "..."}]}
+```
+
+Inspect a session before resuming it (recent transcript, role/text per message):
+
+```
+opencode_session_show(session="ses_abc123", last_messages=10)
+# → {"ok": true, "session": {...}, "messages": [{"role": "user", "text": "...", "created": ...}, ...]}
+```
+
+Delete a session (permanent, cannot be undone):
+
+```
+opencode_session_delete(session="ses_abc123")
+```
+
+Typical loop: delegate with `format="json"` → get `session_id` → later, `opencode_session_list`/`opencode_session_show` to find and verify it → `opencode_delegate(session=...)` to resume.
 
 ## Parameter Reference
 
@@ -119,7 +156,8 @@ opencode_delegate(goal="Add parser regression tests and commit", workdir="/tmp/i
 ## Session & Cost Management
 
 - Token usage and cost per run: use `format="json"` and read `tokens`/`cost` from the result
-- List past sessions / aggregate stats: use the CLI directly (`opencode session list`, `opencode stats`) via a terminal command — the plugin does not expose these
+- Session listing, transcript inspection, deletion: use `opencode_session_list`, `opencode_session_show`, `opencode_session_delete`
+- Aggregate usage stats: use the CLI directly (`opencode stats`) via a terminal command — the plugin does not expose this
 
 ## Pitfalls
 
@@ -128,6 +166,8 @@ opencode_delegate(goal="Add parser regression tests and commit", workdir="/tmp/i
 - Avoid sharing one working directory across parallel OpenCode delegations.
 - Long tasks: raise `timeout` (max 1800s) rather than retrying; on timeout the partial output is returned with `ok: false`.
 - If OpenCode appears stuck, the result will eventually time out — inspect OpenCode logs directly via the CLI if needed.
+- `opencode_session_delete` is permanent — verify the session ID with `opencode_session_list` or `opencode_session_show` before deleting.
+- Session tools have a short 60s CLI timeout; they are metadata operations, not task runs.
 
 ## Verification
 
@@ -144,9 +184,10 @@ Success criteria:
 
 ## Rules
 
-1. Prefer `opencode_delegate` over raw `opencode run` terminal commands — it gives structured results, timeout control, and automatic binary resolution.
+1. Prefer the plugin tools over raw `opencode` terminal commands — they give structured results, timeout control, and automatic binary resolution.
 2. Use `format="json"` when you need the session ID, token counts, or cost.
 3. Always scope a delegation to a single repo/workdir; use separate workdirs for parallel tasks.
 4. For long tasks, provide progress updates by re-delegating with `session` continuation.
 5. Report concrete outcomes (files changed, tests, remaining risks) back to the user.
-6. Use the CLI directly (terminal) only for things the plugin does not expose: interactive TUI, `opencode session list`, `opencode stats`, `opencode pr`.
+6. Use the CLI directly (terminal) only for things the plugin does not expose: interactive TUI, `opencode stats`, `opencode pr`.
+7. Before resuming a session from a past run, confirm it with `opencode_session_show` to check the transcript matches expectations.

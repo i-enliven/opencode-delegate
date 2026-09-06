@@ -1,10 +1,10 @@
 # opencode-delegate
 
-A Hermes plugin that delegates bounded coding tasks to the [OpenCode CLI](https://opencode.ai) via a single tool: `opencode_delegate`.
+A Hermes plugin that delegates bounded coding tasks to the [OpenCode CLI](https://opencode.ai) and manages OpenCode sessions, via four tools: `opencode_delegate`, `opencode_session_list`, `opencode_session_show`, and `opencode_session_delete`.
 
 ## What it does
 
-Runs `opencode run` as a subprocess with your goal, working directory, and options, then returns OpenCode's final report as JSON. OpenCode is an autonomous coding agent — this plugin lets another agent (or your tooling) hand off bounded tasks like "implement feature X", "fix bug Y", or "review this module" and get back a structured result.
+Runs `opencode run` as a subprocess with your goal, working directory, and options, then returns OpenCode's final report as JSON. OpenCode is an autonomous coding agent — this plugin lets another agent (or your tooling) hand off bounded tasks like "implement feature X", "fix bug Y", or "review this module" and get back a structured result. Session tools let you list, inspect, resume, and delete OpenCode sessions.
 
 ## Installation
 
@@ -74,6 +74,38 @@ With `"format": "json"`:
 ```
 
 The `session_id` from a JSON-format run can be passed back as `session` to continue that conversation in a follow-up call.
+
+## Session tools
+
+### opencode_session_list
+
+List OpenCode sessions, most recent first:
+
+```json
+{"limit": 20, "workdir": "~/projects/my-app"}
+```
+
+Both parameters are optional. Returns `{"ok": true, "sessions": [{"id", "title", "updated", "created", "directory"}]}`.
+
+### opencode_session_show
+
+Show a session's details and recent transcript (via `opencode export`):
+
+```json
+{"session": "ses_abc123", "last_messages": 10}
+```
+
+Returns `{"ok": true, "session": {...}, "messages": [{"role", "text", "created"}]}`.
+
+### opencode_session_delete
+
+Delete a session permanently:
+
+```json
+{"session": "ses_abc123"}
+```
+
+Returns `{"ok": true}`.
 
 ## Behavior notes
 
