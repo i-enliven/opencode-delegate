@@ -105,6 +105,7 @@ def test_successful_run():
         args, kwargs = mock_run.call_args
         assert args[0] == ["/fake/bin/opencode", "run", "--dir", os.getcwd(), "write hello world"]
         assert kwargs["shell"] is False
+        assert kwargs["stdin"] == subprocess.DEVNULL
 
 
 def test_command_with_model_flag():
@@ -403,3 +404,17 @@ def test_session_delete_nonzero_exit():
         res = json.loads(tools.opencode_session_delete({"session": "ses_a"}))
         assert res["ok"] is False
         assert "session not found" in res["error"]
+
+
+def test_subprocess_stdin_devnull():
+    """Ensure both opencode_delegate and _run_cli pass stdin=subprocess.DEVNULL to prevent hanging."""
+    mock_proc = MagicMock(returncode=0, stdout="[]", stderr="")
+    with patch.object(tools, "resolve_opencode_binary", return_value="/fake/bin/opencode"), \
+         patch("subprocess.run", return_value=mock_proc) as mock_run:
+        tools.opencode_delegate({"goal": "test devnull"})
+        assert mock_run.call_args.kwargs.get("stdin") == subprocess.DEVNULL
+
+        mock_run.reset_mock()
+        tools.opencode_session_list({})
+        assert mock_run.call_args.kwargs.get("stdin") == subprocess.DEVNULL
+
