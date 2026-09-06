@@ -192,9 +192,39 @@ Returns `{"ok": true}`.
 - The subprocess PATH is augmented with the resolved binary's directory so child processes can find sibling tools.
 - All failures return `{"ok": false, ...}` with a descriptive `error` — the handler never raises.
 
-## Bundled skill
+## Using the Skill with Hermes & AI Agents
 
-The repo ships an OpenCode skill file at `hermes/skills/opencode/SKILL.md` — a comprehensive usage guide for OpenCode CLI covering one-shot tasks, interactive sessions, PR review workflows, parallel work patterns, and common flags. See [Installation](#3-install-the-skill-in-hermes) above for copying or symlinking it into `~/.hermes/skills/opencode/SKILL.md`.
+The repository ships an agent-optimized skill file at `hermes/skills/opencode/SKILL.md`. This skill equips AI agents (like Hermes, Claude, or custom agentic workflows) with the decision logic, execution patterns, and guardrails necessary to autonomously delegate tasks to OpenCode. See [Installation](#4-install-the-skill-in-hermes) above for copying or symlinking it into `~/.hermes/skills/opencode/SKILL.md`.
+
+### How Hermes & Agents Discover the Skill
+Hermes indexes installed skills in `~/.hermes/skills/` at session startup:
+1. The skill frontmatter registers `opencode` with trigger tags (`Coding-Agent`, `OpenCode`, `Autonomous`, `Refactoring`, `Code-Review`).
+2. When a prompt requires coding, fixing bugs, refactoring, or code reviews, the agent runtime matches the prompt intent against the skill description and activates it into context.
+3. You can inspect all available skills in Hermes with:
+   ```bash
+   hermes skills list
+   ```
+
+### Prompting Hermes to Delegate to OpenCode
+Users can instruct Hermes in natural language to leverage OpenCode. Hermes references the skill to invoke the appropriate plugin tools and parameters:
+
+- **One-Shot Implementation / Bug Fix**:
+  > *"Use OpenCode to implement exponential backoff retry in `http_client.py` and run tests."*
+- **Iterative Development & Feedback**:
+  > *"Delegate creating a FastAPI authentication boilerplate to OpenCode."*  
+  Followed by:  
+  > *"Ask OpenCode to continue that session and add JWT refresh token rotation."*
+- **Targeted Code & PR Review**:
+  > *"Use OpenCode to review the uncommitted changes in this repository for potential race conditions."*
+- **Session Management**:
+  > *"List my recent OpenCode sessions and delete the ones from yesterday."*
+
+### Agent Delegation Lifecycle
+When the skill is active, agents follow this structured lifecycle:
+1. **Scope & Prepare**: The agent determines if the task is one-shot or multi-turn, scopes the `workdir`, and specifies relevant context files (`files=[...]`).
+2. **Execute Delegation**: The agent invokes `opencode_delegate` (using `format="json"` when multi-turn session tracking is required).
+3. **Session Continuation**: For follow-up tasks, the agent feeds `session="ses_..."` back into `opencode_delegate`. The plugin automatically aligns the execution directory with the session's creation path.
+4. **Independent Disk Verification**: Before reporting success to the user, the agent inspects the file modifications (`git diff`, `git status`) and executes automated tests on disk.
 
 ## Development
 

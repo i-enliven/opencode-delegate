@@ -1,7 +1,7 @@
 ---
 name: opencode
-description: "Delegate coding to OpenCode via the opencode-delegate plugin (features, PR review, session management)."
-version: 1.4.0
+description: "Delegate coding tasks, bug fixes, refactoring, PR reviews, and multi-turn development sessions to the OpenCode autonomous agent via opencode_delegate and opencode_session_* tools."
+version: 1.5.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -11,183 +11,152 @@ metadata:
     related_skills: [claude-code, codex, hermes-agent]
 ---
 
-# OpenCode via opencode-delegate plugin
+# OpenCode Autonomous Delegation
 
-Use the opencode-delegate plugin tools to hand bounded coding tasks to [OpenCode](https://opencode.ai), an autonomous coding agent, and to manage OpenCode sessions. The plugin wraps `opencode run` as a subprocess and returns structured JSON results — no terminal/process tools needed.
+Delegate bounded coding tasks, code reviews, and multi-turn refactoring to [OpenCode](https://opencode.ai) via plugin tools. The plugin manages subprocess execution, session persistence, automatic directory alignment, and structured JSON telemetry without requiring terminal interactions.
 
-## Tools Provided
+## Tool Index
 
-| Tool | Purpose |
-|------|---------|
-| `opencode_delegate` | Delegate a bounded coding task to OpenCode |
-| `opencode_session_list` | List OpenCode sessions (find IDs to resume) |
-| `opencode_session_show` | Inspect a session's details and recent transcript |
-| `opencode_session_delete` | Delete a session by ID (permanent) |
+| Tool | Purpose | Primary Arguments |
+|------|---------|-------------------|
+| `opencode_delegate` | Execute or continue a coding task | `goal`, `workdir`, `files`, `session`, `format`, `timeout`, `model` |
+| `opencode_session_list` | Find past sessions by directory | `workdir`, `limit` |
+| `opencode_session_show` | Inspect session metadata & transcript | `session`, `last_messages` |
+| `opencode_session_delete` | Permanently remove a session | `session` |
 
-## When to Use
+---
 
-- User explicitly asks to use OpenCode
-- You want an external coding agent to implement/refactor/review code
-- You want parallel task execution in isolated workdirs
-- You need a bounded, one-shot delegation with a structured result
-- You need to find, inspect, resume, or clean up OpenCode sessions
+## Agent Decision Flow
 
-## Prerequisites
+1. **Determine Interaction Type**:
+   - **One-off task / Answer text needed**: Call `opencode_delegate(goal=..., workdir=...)` with default format (returns response text in `output`).
+   - **Multi-turn / Iterative workflow**: Call `opencode_delegate(goal=..., format="json")` to capture `session_id`, then continue via `opencode_delegate(goal=..., session=session_id)`.
+   - **Session Discovery**: Call `opencode_session_list(workdir=...)` to locate prior session IDs.
+   - **Transcript Review**: Call `opencode_session_show(session=..., last_messages=10)` to inspect previous dialogue before continuing.
 
-- The opencode-delegate plugin installed and registered (provides the four tools above)
-- OpenCode CLI installed — the plugin auto-detects it on `PATH`, in `~/.nvm/versions/node/*/bin/opencode`, or `~/.opencode/bin/opencode`
-- Auth configured: `opencode auth login` or provider env vars (OPENROUTER_API_KEY, etc.)
-- Git repository for code tasks (recommended)
+2. **Scope the Working Directory**:
+   - Explicitly specify `workdir` whenever possible. Missing directories are auto-created.
+   - For resumed sessions (`session="ses_..."`), the plugin automatically aligns the execution directory with the session's recorded creation directory.
+   - Isolate concurrent delegations in separate working directories or temporary clones.
 
-## Basic One-Shot Task
+3. **Select Context Files**:
+   - Pass relevant target files in `files=["path/to/file1", "path/to/file2"]` to focus OpenCode's context window.
 
-```
-opencode_delegate(goal="Add retry logic to API calls and update tests", workdir="~/project")
-```
+---
 
-`workdir` defaults to the current session cwd; a missing directory is pre-created automatically.
+## Core Execution Patterns
 
-## Attaching Context Files
-
-Use `files` to hand OpenCode specific files as context:
-
-```
-opencode_delegate(goal="Review this config for security issues", files=["config.yaml", ".env.example"])
-```
-
-## Forcing a Model or Agent
-
-```
-opencode_delegate(goal="Refactor auth module", model="openrouter/anthropic/claude-sonnet-4")
-opencode_delegate(goal="Draft a migration plan", agent="plan")
-```
-
-## Structured Output (session, tokens, cost)
-
-Pass `format="json"` to get machine-readable results including the OpenCode session ID and token usage:
-
-```
-opencode_delegate(goal="Fix issue #101", format="json")
-# → {"ok": true, "exit_code": 0, "session_id": "ses_abc123", "tokens": {...}, "cost": 0}
-```
-
-## Continuing a Session
-
-Feed the `session_id` from a JSON-format run back in as `session` to continue that conversation in a follow-up call:
-
-```
-opencode_delegate(goal="Now add error handling for token expiry", session="ses_abc123")
-```
-
-Or continue the most recent session with `continue=true`. `session` takes precedence over `continue`.
-
-Note: a resumed run with `format="json"` returns only structured fields (session_id, tokens, cost) — use plain-text format (omit `format`) when you need the reply text itself.
-
-## Session Management
-
-Find sessions to resume:
-
-```
-opencode_session_list(limit=20)
-opencode_session_list(workdir="~/project")  # only sessions in that directory
-# → {"ok": true, "sessions": [{"id": "ses_abc123", "title": "...", "updated": ..., "created": ..., "directory": "..."}]}
-```
-
-Inspect a session before resuming it (recent transcript, role/text per message):
-
-```
-opencode_session_show(session="ses_abc123", last_messages=10)
-# → {"ok": true, "session": {...}, "messages": [{"role": "user", "text": "...", "created": ...}, ...]}
-```
-
-Delete a session (permanent, cannot be undone):
-
-```
-opencode_session_delete(session="ses_abc123")
-```
-
-Typical loop: delegate with `format="json"` → get `session_id` → later, `opencode_session_list`/`opencode_session_show` to find and verify it → `opencode_delegate(session=...)` to resume.
-
-## Parameter Reference
-
-| Parameter  | Type     | Description |
-|------------|----------|-------------|
-| `goal`     | string   | Required. The coding task for OpenCode |
-| `workdir`  | string   | Working directory (default: session cwd); created if missing |
-| `timeout`  | integer  | Seconds to allow; default 600, clamped 30–1800 |
-| `model`    | string   | Force a specific model via `--model` |
-| `agent`    | string   | Agent name via `--agent` (e.g. `build`, `plan`) |
-| `files`    | string[] | File paths attached via `--file` |
-| `session`  | string   | Session ID to continue via `--session` |
-| `continue` | boolean  | Continue the last session via `--continue` |
-| `format`   | string   | `json` for structured output (session_id, tokens, cost) |
-
-## Response Format
-
-Default (plain text): `{"ok": bool, "exit_code": int|null, "output": str, "error": str|null}`
-
-With `format="json"`: `{"ok": bool, "exit_code": int|null, "session_id": str|null, "tokens": obj|null, "cost": num|null, "stderr": str|null, "error": str|null}`
-
-Output is truncated to the last 8000 characters. All failures return `ok: false` with a descriptive `error` — the tool never raises.
-
-## PR Review Workflow
-
-Review a PR in a temporary clone for isolation:
-
-```
+### Pattern 1: Bounded Feature or Bugfix
+Delegate a self-contained change and return plain-text summary:
+```python
 opencode_delegate(
-  goal="Review this PR vs main. Report bugs, security risks, test gaps, and style issues.",
-  workdir="/tmp/pr-review-42",
-  files=[".gitignore", "README.md"]
+    goal="Implement exponential backoff retry in http_client.py and run pytest tests/test_client.py",
+    workdir="/home/user/project",
+    files=["http_client.py", "tests/test_client.py"],
+    timeout=600
+)
+```
+**Completion Criterion**: Tool returns `ok: true`. Verify changes with `git diff` or tests in the project directory.
+
+### Pattern 2: Multi-Turn Iterative Development
+Start a session, obtain its ID, and continue with iterative feedback:
+
+**Turn 1: Initial Implementation (Request JSON)**
+```python
+res = opencode_delegate(
+    goal="Scaffold auth module with JWT verification",
+    workdir="/home/user/project",
+    format="json"
+)
+session_id = res["session_id"]  # e.g., "ses_3b8a10f9"
+```
+
+**Turn 2: Follow-Up Refinement (Supply Session ID)**
+```python
+opencode_delegate(
+    goal="Add refresh token rotation to the auth module and add unit tests",
+    session=session_id
+)
+```
+*(Alternatively, pass `continue=true` to continue the most recent session).*
+
+### Pattern 3: Isolated PR or Code Review
+Review uncommitted changes or branches in a temporary or isolated clone:
+```python
+opencode_delegate(
+    goal="Review changes in this repository against main. Audit for security vulnerabilities, race conditions, and test gaps. Provide concrete diff recommendations.",
+    workdir="/tmp/repo-review-worktree",
+    files=["src/auth.py", "src/db.py"]
 )
 ```
 
-Clone the repo into the workdir first (e.g. via a terminal command), then delegate the review against it.
+### Pattern 4: Session Inspection and Clean Up
+Inspect a session's conversation history before resuming or deleting:
+```python
+# List existing sessions
+sessions = opencode_session_list(limit=10)
 
-## Parallel Work Pattern
+# Inspect transcript of target session
+details = opencode_session_show(session="ses_3b8a10f9", last_messages=5)
 
-Use separate workdirs to avoid collisions; run multiple delegations and collect results:
-
-```
-opencode_delegate(goal="Fix issue #101 and commit", workdir="/tmp/issue-101")
-opencode_delegate(goal="Add parser regression tests and commit", workdir="/tmp/issue-102")
-```
-
-## Session & Cost Management
-
-- Token usage and cost per run: use `format="json"` and read `tokens`/`cost` from the result
-- Session listing, transcript inspection, deletion: use `opencode_session_list`, `opencode_session_show`, `opencode_session_delete`
-- Aggregate usage stats: use the CLI directly (`opencode stats`) via a terminal command — the plugin does not expose this
-
-## Pitfalls
-
-- The plugin runs `opencode run` (one-shot, non-interactive). It does NOT support interactive TUI sessions — for iterative work, use `session` continuation instead.
-- Binary resolution is automatic (PATH → nvm → `~/.opencode/bin`), but if behavior differs between environments, verify with `which -a opencode` and `opencode --version`.
-- Avoid sharing one working directory across parallel OpenCode delegations.
-- Long tasks: raise `timeout` (max 1800s) rather than retrying; on timeout the partial output is returned with `ok: false`.
-- If OpenCode appears stuck, the result will eventually time out — inspect OpenCode logs directly via the CLI if needed.
-- `opencode_session_delete` is permanent — verify the session ID with `opencode_session_list` or `opencode_session_show` before deleting.
-- Session tools have a short 60s CLI timeout; they are metadata operations, not task runs.
-
-## Verification
-
-Smoke test:
-
-```
-opencode_delegate(goal="Respond with exactly: OPENCODE_SMOKE_OK")
+# Purge session when completed
+opencode_session_delete(session="ses_3b8a10f9")
 ```
 
-Success criteria:
-- Result `ok: true` and output includes `OPENCODE_SMOKE_OK`
-- No provider/model errors in `error`
-- For code tasks: expected files changed and tests pass
+---
 
-## Rules
+## Parameter Reference
 
-1. Prefer the plugin tools over raw `opencode` terminal commands — they give structured results, timeout control, and automatic binary resolution.
-2. Use `format="json"` when you need the session ID, token counts, or cost.
-3. Always scope a delegation to a single repo/workdir; use separate workdirs for parallel tasks.
-4. For long tasks, provide progress updates by re-delegating with `session` continuation.
-5. Report concrete outcomes (files changed, tests, remaining risks) back to the user.
-6. Use the CLI directly (terminal) only for things the plugin does not expose: interactive TUI, `opencode stats`, `opencode pr`.
-7. Before resuming a session from a past run, confirm it with `opencode_session_show` to check the transcript matches expectations.
+| Parameter | Type | Default | Details |
+|-----------|------|---------|---------|
+| `goal` | string | *required* | Clear, actionable instruction for OpenCode. |
+| `workdir` | string | cwd | Working directory. Auto-created if missing. Auto-aligned on session resumption. |
+| `files` | list[str] | `[]` | File paths passed via `--file` to prime OpenCode's context. |
+| `format` | string | `"default"` | Set to `"json"` to receive structured JSON (`session_id`, `tokens`, `cost`). Omit for text `output`. |
+| `session` | string | `null` | Session ID (e.g. `ses_...`) to resume. Takes precedence over `continue`. |
+| `continue`| bool | `false` | When true and `session` not given, resumes the most recent session. |
+| `timeout` | int | `600` | Process timeout in seconds (clamped: 30–1800). |
+| `model` | string | `null` | Override model (e.g., `openrouter/anthropic/claude-sonnet-4`). |
+| `agent` | string | `null` | OpenCode agent mode (e.g., `build`, `plan`). |
+
+---
+
+## Response Shapes
+
+### Default Plain-Text Format
+```json
+{
+  "ok": true,
+  "exit_code": 0,
+  "output": "...OpenCode response text...",
+  "error": null
+}
+```
+*Use when you want to read or summarize OpenCode's direct assistant reply.*
+
+### Structured JSON Format (`format="json"`)
+```json
+{
+  "ok": true,
+  "exit_code": 0,
+  "session_id": "ses_3b8a10f9",
+  "tokens": {"input": 1240, "output": 450},
+  "cost": 0.0035,
+  "stderr": "...",
+  "error": null
+}
+```
+*Use when capturing `session_id` for multi-turn sessions, or tracking token/cost budgets.*
+
+---
+
+## Critical Rules & Guardrails for Agents
+
+1. **Verify on Disk**: Never take OpenCode's claims for granted. After `opencode_delegate` finishes with `ok: true`, check `git status`, inspect file modifications, and run test suites before marking your task complete.
+2. **Handle Timeouts Gracefully**: On timeout, the tool returns `ok: false` with partial captured `output` and `error="Task timed out after ...s"`. If a task is complex, specify `timeout=1200` or `1800` rather than retrying immediately.
+3. **Structured vs Text Tradeoff**:
+   - `format="json"` exposes `session_id` but does not include conversational assistant text in `output`.
+   - Default format includes conversational text in `output`, but omits `session_id`.
+   - Standard pattern: Use `format="json"` on turn 1 to store `session_id`, and resume subsequent turns with plain text format to inspect results.
+4. **Permanent Deletions**: `opencode_session_delete` permanently deletes the session from the OpenCode database (`~/.local/share/opencode/opencode.db`). Confirm the session ID with `opencode_session_show` before deletion.
+5. **No Terminal Fallback**: Always invoke delegation via `opencode_delegate`. Do not invoke `opencode run` via bash/terminal commands.
